@@ -1,0 +1,76 @@
+// ============================================================
+// Firestore Security Rules for SkillSwap
+// Deploy via: Firebase Console → Firestore → Rules
+// ============================================================
+
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ========== HELPER FUNCTIONS ==========
+
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(uid) {
+      return request.auth.uid == uid;
+    }
+
+    function isParticipant(chatData) {
+      return request.auth.uid in chatData.participants;
+    }
+
+    // ========== USERS ==========
+    // Users can read any profile, but only edit their own
+    match /users/{userId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && isOwner(userId);
+      allow update: if isAuthenticated() && isOwner(userId);
+      allow delete: if isAuthenticated() && isOwner(userId);
+    }
+
+    // ========== CHATS ==========
+    // Only participants can read/write chat rooms
+    match /chats/{chatId} {
+      allow read: if isAuthenticated() &&
+        isParticipant(resource.data);
+      allow create: if isAuthenticated();
+      allow update: if isAuthenticated() &&
+        isParticipant(resource.data);
+
+      // Messages subcollection
+      match /messages/{messageId} {
+        allow read: if isAuthenticated() &&
+          isParticipant(get(/databases/$(database)/documents/chats/$(chatId)).data);
+        allow create: if isAuthenticated() &&
+          isParticipant(get(/databases/$(database)/documents/chats/$(chatId)).data) &&
+          request.resource.data.senderId == request.auth.uid;
+        allow update: if isAuthenticated() &&
+          isParticipant(get(/databases/$(database)/documents/chats/$(chatId)).data);
+      }
+    }
+
+    // ========== SWAP REQUESTS ==========
+    // Sender can create, both parties can read, recipient can update status
+    match /swap_requests/{requestId} {
+      allow read: if isAuthenticated() && (
+        resource.data.fromUserId == request.auth.uid ||
+        resource.data.toUserId == request.auth.uid
+      );
+      allow create: if isAuthenticated() &&
+        request.resource.data.fromUserId == request.auth.uid;
+      allow update: if isAuthenticated() &&
+        resource.data.toUserId == request.auth.uid;
+    }
+
+    // ========== REVIEWS ==========
+    // Anyone authenticated can read, only the author can create
+    match /reviews/{reviewId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() &&
+        request.resource.data.fromUserId == request.auth.uid &&
+        request.resource.data.fromUserId != request.resource.data.toUserId; // no self-reviews
+    }
+  }
+}
